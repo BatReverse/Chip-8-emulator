@@ -121,8 +121,59 @@ void DRW_Vx_Vy_nibble(Chip_t* chip, uint8_t x, uint8_t y) {
     //todo
 }
 
+void SKP_Vx(Chip_t* chip, uint8_t x){
+    if(chip->keypad[chip->reg[x]]){
+        chip->PC += 2;
+    }
+}
+void SKNP_Vx(Chip_t* chip, uint8_t x){
+    if(!chip->keypad[chip->reg[x]]){
+        chip->PC += 2;
+    }
+}
 
+void LD_Vx_DT(Chip_t* chip,uint8_t x){
+    chip->reg[x] = chip->DT;
+}
 
+void LD_ST_Vx(Chip_t* chip,uint8_t x){
+    chip->ST = chip->reg[x];
+}
+
+void ADD_I_Vx(Chip_t* chip,uint8_t x){
+    chip->I += chip->reg[x];
+}
+
+void LD_F_Vx(){
+
+}
+
+void LD_B_Vx(Chip_t* chip,uint8_t x){
+    uint8_t v = chip->reg[x];
+    //jamais au dessus de 255
+    uint8_t hunderds = v/100;
+    uint8_t tens = (v%100)/10;
+    uint8_t ones = (v%10);
+
+    chip->ram[chip->I] = hunderds;
+    chip->ram[chip->I+1] = tens;
+    chip->ram[chip->I+2] = ones;
+}
+
+void LD_I_Vx(Chip_t* chip,uint8_t x){
+    uint8_t I = chip->I;
+    for(int i=0;i<=x;i++){
+        chip->ram[I+i] = chip->reg[i];
+    }
+}
+
+//a ne pas confondre avec la commande précedente
+void LD_Vx_I(Chip_t* chip,uint8_t x){
+    uint8_t I = chip->I;
+    for(int i=0;i<=x;i++){
+        chip->reg[i] = chip->ram[I+i];
+    }
+}
 
 void fetch_decodeChip(Chip_t* chip) {
     const uint16_t opcode = (chip->ram[chip->PC] << 8) | chip->ram[chip->PC + 1];

@@ -4,3 +4,4 @@
 # CMake build output
 cmake-build-*/
 build/
+a.out
