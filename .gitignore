@@ -1,7 +1,8 @@
 # CLion / IntelliJ
 .idea/
 
-# CMake build output
-cmake-build-*/
-build/
+# Build output
+Chip_8
+*.o
+*.d
 a.out
