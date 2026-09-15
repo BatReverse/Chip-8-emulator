@@ -5,6 +5,8 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #define FONTSET_ADDR 0x50
 
@@ -27,11 +29,35 @@ static const uint8_t fontset[80] = {
     0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
-void initChip(Chip_t* chip) {
+Chip_t* initChip() {
+    Chip_t* chip = malloc(sizeof(Chip_t));
     memset(chip, 0, sizeof(Chip_t));
     chip->PC = 0x200;
     memcpy(chip->ram + FONTSET_ADDR, fontset, sizeof(fontset));
+    return chip;
 }
+
+bool load_rom(Chip_t* chip,char* path){
+    FILE* fptr;
+
+    fptr = fopen(path,"rb");
+    if(!fptr){
+        printf("error opening file\n");
+        return false;
+    }
+    int n=0;
+    int byte;
+    while ((byte=fgetc(fptr)) != EOF)
+    {
+        chip->ram[0x200+n] = (uint8_t)byte;
+        n++;
+        continue;
+    }
+    fclose(fptr);
+
+    return true;
+}
+
 
 void OP_00E0(Chip_t* chip) {
     memset(chip->gfx, 0, 64*32);
@@ -87,48 +113,50 @@ void OP_8XY0(Chip_t* chip, uint8_t x, uint8_t y) {
 
 void OP_8XY1(Chip_t* chip, uint8_t x, uint8_t y) {
     chip->reg[x]|=chip->reg[y];
+    chip->reg[15] = 0; // quirk COSMAC VIP : les ops logiques resettent VF
 }
 
 void OP_8XY2(Chip_t* chip, uint8_t x, uint8_t y) {
     chip->reg[x]&=chip->reg[y];
+    chip->reg[15] = 0;
 }
 
 void OP_8XY3(Chip_t* chip, uint8_t x, uint8_t y) {
     chip->reg[x]^=chip->reg[y];
+    chip->reg[15] = 0;
 }
 
 void OP_8XY4(Chip_t* chip, uint8_t x, uint8_t y) {
-    if (chip->reg[y] + chip->reg[x] > 255)
-        chip->reg[15] = 1;
-    else
-        chip->reg[15] = 0;
-    chip->reg[x] += chip->reg[y];
+    uint8_t vx = chip->reg[x];
+    uint8_t vy = chip->reg[y];
+    chip->reg[x] = vx + vy;
+    chip->reg[15] = ((uint16_t)vx + vy > 255) ? 1 : 0; // flag écrit en dernier
 }
 
 void OP_8XY5(Chip_t* chip, uint8_t x, uint8_t y) {
-    if (chip->reg[x]>chip->reg[y])
-        chip->reg[15] = 1;
-    else
-        chip->reg[15] = 0;
-    chip->reg[x] -= chip->reg[y];
+    uint8_t vx = chip->reg[x];
+    uint8_t vy = chip->reg[y];
+    chip->reg[x] = vx - vy;
+    chip->reg[15] = (vx >= vy) ? 1 : 0;
 }
 
-void OP_8XY6(Chip_t* chip, uint8_t x) {
-    chip->reg[15] = chip->reg[x] & 1;
-    chip->reg[x]>>=1;
+void OP_8XY6(Chip_t* chip, uint8_t x, uint8_t y) {
+    uint8_t vy = chip->reg[y]; // quirk COSMAC VIP : décale VY, pas VX
+    chip->reg[x] = vy >> 1;
+    chip->reg[15] = vy & 1;
 }
 
 void OP_8XY7(Chip_t* chip, uint8_t x, uint8_t y) {
-    if (chip->reg[x] < chip->reg[y])
-        chip->reg[15] = 1;
-    else
-        chip->reg[15] = 0;
-    chip->reg[x] = chip->reg[y] - chip->reg[x];
+    uint8_t vx = chip->reg[x];
+    uint8_t vy = chip->reg[y];
+    chip->reg[x] = vy - vx;
+    chip->reg[15] = (vy >= vx) ? 1 : 0;
 }
 
-void OP_8XYE(Chip_t* chip, uint8_t x) {
-    chip->reg[15] = chip->reg[x] >> 7;
-    chip->reg[x] <<= 1;
+void OP_8XYE(Chip_t* chip, uint8_t x, uint8_t y) {
+    uint8_t vy = chip->reg[y];
+    chip->reg[x] = vy << 1;
+    chip->reg[15] = (vy >> 7) & 1;
 }
 
 void OP_ANNN(Chip_t* chip, uint16_t addr) {
@@ -175,7 +203,25 @@ void OP_FX07(Chip_t* chip,uint8_t x){
 }
 
 void OP_FX0A(Chip_t* chip, uint8_t x){
-    //todo
+    // comportement VIP : attend l'appui PUIS le relâchement d'une touche
+    if (chip->fx0a_waiting_release) {
+        if (!chip->keypad[chip->fx0a_key]) {
+            chip->reg[x] = chip->fx0a_key;
+            chip->fx0a_waiting_release = false;
+        } else {
+            chip->PC -= 2; // touche toujours enfoncée : on rejoue l'instruction
+        }
+        return;
+    }
+
+    for (uint8_t k = 0; k < 16; k++) {
+        if (chip->keypad[k]) {
+            chip->fx0a_key = k;
+            chip->fx0a_waiting_release = true;
+            break;
+        }
+    }
+    chip->PC -= 2; // aucune touche pressée (ou en attente du relâchement) : on rejoue
 }
 
 void OP_FX15(Chip_t* chip, uint8_t x){
@@ -212,18 +258,20 @@ void OP_FX33(Chip_t* chip,uint8_t x){
 }
 
 void OP_FX55(Chip_t* chip,uint8_t x){
-    uint8_t I = chip->I;
+    uint16_t I = chip->I;
     for(int i=0;i<=x;i++){
         chip->ram[I+i] = chip->reg[i];
     }
+    chip->I += x + 1; // quirk COSMAC VIP : I est incrémenté après Fx55/Fx65
 }
 
 //a ne pas confondre avec la commande précedente
 void OP_FX65(Chip_t* chip,uint8_t x){
-    uint8_t I = chip->I;
+    uint16_t I = chip->I;
     for(int i=0;i<=x;i++){
         chip->reg[i] = chip->ram[I+i];
     }
+    chip->I += x + 1;
 }
 
 void fetch_decodeChip(Chip_t* chip) {
@@ -286,13 +334,13 @@ void fetch_decodeChip(Chip_t* chip) {
                     OP_8XY5(chip, X, Y);
                     break;
                 case 0x6:
-                    OP_8XY6(chip, X);
+                    OP_8XY6(chip, X, Y);
                     break;
                 case 0x7:
                     OP_8XY7(chip, X, Y);
                     break;
                 case 0xE:
-                    OP_8XYE(chip, X);
+                    OP_8XYE(chip, X, Y);
                     break;
             }
             break;

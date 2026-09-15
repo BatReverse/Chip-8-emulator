@@ -1,5 +1,5 @@
 CC = cc
-CFLAGS = -std=c11 -Wall -Wextra $(shell pkg-config --cflags sdl2)
+CFLAGS = -std=c11 -Wall -g -Wextra $(shell pkg-config --cflags sdl2)
 LDFLAGS = $(shell pkg-config --libs sdl2)
 
 TARGET = Chip_8
